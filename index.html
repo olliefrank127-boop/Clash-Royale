@@ -24,7 +24,7 @@
     .card{flex:1;background:rgba(255,255,255,0.02);border-radius:8px;padding:6px;text-align:center;cursor:pointer}
     .card.disabled{opacity:0.45}
     .center{display:flex;align-items:center;justify-content:center}
-    .overlay{position:absolute;left:0;top:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center}
+    .overlay{position:absolute;left:0;top:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.4);}
     .menu{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px}
     .bigBtn{font-size:20px;padding:12px 20px;border-radius:12px}
     .muted{color:var(--muted);font-size:13px}
@@ -46,7 +46,7 @@
       <div style="flex:1;position:relative">
         <canvas id="game" width="640" height="420"></canvas>
         <div id="menuOverlay" class="overlay" style="pointer-events:auto">
-          <div class="menu" style="width:100%;height:100%">
+          <div class="menu">
             <div style="text-align:center">
               <h2 style="margin:6px 0">Mini Royale</h2>
               <p class="muted">Click Start to play. Drag cards onto battlefield to place troops.</p>
@@ -102,6 +102,8 @@ const cardEls = [document.getElementById('card1'), document.getElementById('card
 
 let game = null;
 
+function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+
 class Entity{
   constructor(x,y,r,opts={}){
     this.x=x;this.y=y;this.r=r;this.hp=opts.hp||10;this.maxHp=this.hp;this.owner=opts.owner||'player';
@@ -114,17 +116,14 @@ class Entity{
 class Game{
   constructor(){
     this.w=canvas.width; this.h=canvas.height;
-    this.lanes = {left:this.h*0.28,right:this.h*0.72};
+    this.lanes={left:this.h*0.28,right:this.h*0.72};
     this.reset();
   }
   reset(){
     this.time=0;this.state='menu';
     this.elixir=5;this.elixirMax=10;this.elixirRegen=1.5;this._regenTimer=0;
     this.entities=[];
-    this.towers={
-      playerLeft:{x:80,y:this.lanes.left,hp:100,max:100},playerKing:{x:80,y:this.h/2,hp:200,max:200},playerRight:{x:80,y:this.lanes.right,hp:100,max:100},
-      enemyLeft:{x:this.w-80,y:this.lanes.left,hp:100,max:100},enemyKing:{x:this.w-80,y:this.h/2,hp:200,max:200},enemyRight:{x:this.w-80,y:this.lanes.right,hp:100,max:100}
-    };
+    this.towers={playerLeft:{x:80,y:this.lanes.left,hp:100,max:100},playerKing:{x:80,y:this.h/2,hp:200,max:200},playerRight:{x:80,y:this.lanes.right,hp:100,max:100},enemyLeft:{x:this.w-80,y:this.lanes.left,hp:100,max:100},enemyKing:{x:this.w-80,y:this.h/2,hp:200,max:200},enemyRight:{x:this.w-80,y:this.lanes.right,hp:100,max:100}};
     this.spawnCooldowns={card1:0,card2:0,card3:0};
     this.playerLaneChoice='left';
     this.aiTimer=0;this.status='Ready';
@@ -137,12 +136,11 @@ class Game{
     if(owner==='player'&&this.elixir<costs[cardIndex]) return false;
     if(this.spawnCooldowns['card'+(cardIndex+1)]>0) return false;
     const def=defs[cardIndex];
-    const px = x!==null? x : (owner==='player'?120:this.w-120);
-    const py = y!==null? y : this.lanes[lane];
-    const ent = new Entity(px,py,def.r,{hp:def.hp,atk:def.atk,speed:def.speed,range:def.range||0,owner:owner});
-    ent.unitType=def.type; ent.lane=lane;
-    this.entities.push(ent);
-    if(owner==='player'){this.elixir -= costs[cardIndex]; this.spawnCooldowns['card'+(cardIndex+1)]=0.5;}
+    const px=x!==null? x : (owner==='player'?120:this.w-120);
+    const py=y!==null? y : this.lanes[lane];
+    const ent=new Entity(px,py,def.r,{hp:def.hp,atk:def.atk,speed:def.speed,range:def.range||0,owner:owner});
+    ent.unitType=def.type; ent.lane=lane; this.entities.push(ent);
+    if(owner==='player'){this.elixir-=costs[cardIndex]; this.spawnCooldowns['card'+(cardIndex+1)]=0.5;}
     return true;
   }
 
@@ -151,30 +149,16 @@ class Game{
     this.time+=dt; this._regenTimer+=dt;
     if(this._regenTimer>=this.elixirRegen){this._regenTimer=0;this.elixir=clamp(this.elixir+1,0,this.elixirMax);}
     for(let k in this.spawnCooldowns) this.spawnCooldowns[k]=Math.max(0,this.spawnCooldowns[k]-dt);
-    // AI: smarter placement toward closest tower
     this.aiTimer+=dt;
-    if(this.aiTimer>1.2){this.aiTimer=0;
-      for(let i=0;i<1;i++){
-        const lane=Math.random()<0.5?'left':'right';
-        const closestTower=this.towers['player'+(lane==='left'?'Left':'Right')];
-        this.spawnTroop(Math.random()<0.6?0:1,lane,'enemy',this.w-120,closestTower.y);
-      }
-    }
-
-    // entities logic
+    if(this.aiTimer>1.2){this.aiTimer=0; const lane=Math.random()<0.5?'left':'right'; const closest=this.towers['player'+(lane==='left'?'Left':'Right')]; this.spawnTroop(Math.random()<0.6?0:1,lane,'enemy',this.w-120,closest.y);}
     for(let e of this.entities){
       if(!e.alive) continue;
-      // nearest enemy troop
       let enemy=null; let dist=1e9;
       for(let o of this.entities){if(o.alive && o.owner!==e.owner){const d=Math.hypot(o.x-e.x,o.y-e.y);if(d<dist){enemy=o;dist=d;}}}
-      if(enemy && dist<=Math.max(e.range,e.r+enemy.r+2)){
-        if(!e._atkTimer) e._atkTimer=0; e._atkTimer-=dt; if(e._atkTimer<=0){enemy.takeDamage(e.atk); e._atkTimer=0.7;}}
-      } else {
-        const targetX=e.owner==='player'? this.w-150 : 150; const dir=Math.sign(targetX-e.x); e.x+=dir*e.speed;
-      }
-      // attack tower
-      const towerKeys=e.owner==='player'? ['enemyLeft','enemyKing','enemyRight'] : ['playerLeft','playerKing','playerRight'];
-      for(let tk of towerKeys){const t=this.towers[tk]; const d=Math.hypot(e.x-t.x,e.y-t.y); if(d<=e.r+22){if(!e._atkTowerTimer)e._atkTowerTimer=0; e._atkTowerTimer-=dt; if(e._atkTowerTimer<=0){t.hp-=e.atk;e._atkTowerTimer=0.8; if(t.hp<0)t.hp=0;}}}
+      if(enemy && dist<=Math.max(e.range,e.r+enemy.r+2)){if(!e._atkTimer)e._atkTimer=0;e._atkTimer-=dt;if(e._atkTimer<=0){enemy.takeDamage(e.atk);e._atkTimer=0.7;}}
+      else{const targetX=e.owner==='player'?this.w-150:150;const dir=Math.sign(targetX-e.x);e.x+=dir*e.speed;}
+      const towerKeys=e.owner==='player'?['enemyLeft','enemyKing','enemyRight']:['playerLeft','playerKing','playerRight'];
+      for(let tk of towerKeys){const t=this.towers[tk];const d=Math.hypot(e.x-t.x,e.y-t.y);if(d<=e.r+22){if(!e._atkTowerTimer)e._atkTowerTimer=0;e._atkTowerTimer-=dt;if(e._atkTowerTimer<=0){t.hp-=e.atk;e._atkTowerTimer=0.8;if(t.hp<0)t.hp=0;}}}
     }
     for(let i=this.entities.length-1;i>=0;i--){if(!this.entities[i].alive)this.entities.splice(i,1);}
     if(this.towers.enemyKing.hp<=0){this.state='win';this.status='You Win!';}
@@ -192,28 +176,16 @@ class Game{
 }
 
 function initGame(){game=new Game(); updateUI();} initGame();
-
 let last=performance.now();
 function loop(t){const dt=(t-last)/1000;last=t;if(game){game.update(dt);game.draw();updateUI();} requestAnimationFrame(loop);} requestAnimationFrame(loop);
 function updateUI(){elixirText.textContent=Math.floor(game.elixir)+' / '+game.elixirMax;elixirFill.style.width=Math.round((game.elixir/game.elixirMax)*100)+'%';statusText.textContent=game.status;const costs=[4,3,6]; cardEls.forEach((el,i)=>{if(game.elixir>=costs[i]&&game.spawnCooldowns['card'+(i+1)]<=0&&game.state==='playing')el.classList.remove('disabled');else el.classList.add('disabled');});}
 
-// drag & drop
-let draggingCard=null; let dragIdx=-1; cardEls.forEach((el,i)=>{
-  el.addEventListener('mousedown',(e)=>{if(game.state==='playing'){draggingCard=el; dragIdx=i;}});
-});
-document.addEventListener('mousemove',(e)=>{if(draggingCard){} });
-document.addEventListener('mouseup',(e)=>{
-  if(draggingCard){
-    const rect=canvas.getBoundingClientRect();
-    const x=e.clientX-rect.left; const y=e.clientY-rect.top;
-    const lane=y<canvas.height/2?'left':'right';
-    game.spawnTroop(dragIdx,lane,'player',x,y);
-    draggingCard=null; dragIdx=-1;
-  }
-});
+let draggingCard=null; let dragIdx=-1; cardEls.forEach((el,i)=>{el.addEventListener('mousedown',(e)=>{if(game.state==='playing'){draggingCard=el; dragIdx=i;}});});
+document.addEventListener('mouseup',(e)=>{if(draggingCard){const rect=canvas.getBoundingClientRect();const x=e.clientX-rect.left;const y=e.clientY-rect.top; const lane=y<canvas.height/2?'left':'right'; game.spawnTroop(dragIdx,lane,'player',x,y); draggingCard=null; dragIdx=-1;}});
 
-startBtn.addEventListener('click',()=>{menuOverlay.style.display='none';game.start();});
-resetBtn.addEventListener('click',()=>{menuOverlay.style.display='flex';game.reset();});
+startBtn.addEventListener('click',()=>{menuOverlay.style.display='none'; game.reset(); game.start();});
+resetBtn.addEventListener('click',()=>{menuOverlay.style.display='flex'; game.reset();});
 shareBtn.addEventListener('click',()=>{alert('To get a public URL: Create GitHub repo, add this HTML as index.html, enable GitHub Pages in settings.');});
-
-function clamp(v,a,b){return Math.max(a,Math
+</script>
+</body>
+</html>
